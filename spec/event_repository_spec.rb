@@ -23,11 +23,19 @@ RSpec.shared_examples :event_repository do |repository_class|
   end
 
   specify 'adds initial event to a new stream' do
-    # (event, stream_name: stream_name, expected_version: expected_version)
     repository.append_to_stream(event = TestDomainEvent.new, 'stream')
     expect(repository.read_all_streams_forward(:head, 1).first).to eq(event)
     expect(repository.read_stream_events_forward('stream').first).to eq(event)
     expect(repository.read_stream_events_forward('other_stream')).to be_empty
+  end
+
+  specify 'adds initial events to a new stream' do
+    repository.append_to_stream([
+      event0 = TestDomainEvent.new(event_id: SecureRandom.uuid),
+      event1 = TestDomainEvent.new(event_id: SecureRandom.uuid),
+    ], 'stream')
+    expect(repository.read_all_streams_forward(:head, 2)).to eq([event0, event1])
+    expect(repository.read_stream_events_forward('stream')).to eq([event0, event1])
   end
 
   # it 'what you get is what you gave' do
