@@ -1,9 +1,33 @@
+require 'activerecord-import'
+
 module RailsEventStoreActiveRecord
   class EventRepository
     def initialize(adapter: Event)
       @adapter = adapter
     end
     attr_reader :adapter
+
+    def append_to_stream(events, stream_name, expected_version=nil)
+      events = [*events]
+      in_stream = events.flat_map.with_index do |event, index|
+        Event.create!(
+          id: event.event_id,
+          data: event.data,
+          metadata: event.metadata,
+          event_type: event.class,
+        )
+        [EventInStream.new(
+          stream: stream_name,
+          position: index,
+          event_id: event.event_id
+        ),EventInStream.new(
+          stream: "__global__",
+          position: nil,
+          event_id: event.event_id
+        )]
+      end
+      EventInStream.import(in_stream)
+    end
 
     def create(event, stream_name)
       data = event.to_h.merge!(stream: stream_name, event_type: event.class)
@@ -47,7 +71,7 @@ module RailsEventStoreActiveRecord
     end
 
     def read_stream_events_forward(stream_name)
-      adapter.where(stream: stream_name).order('id ASC')
+      EventInStream.preload(:event).where(stream: stream_name).order('position ASC, id ASC')
         .map(&method(:build_event_entity))
     end
 
@@ -57,13 +81,12 @@ module RailsEventStoreActiveRecord
     end
 
     def read_all_streams_forward(start_event_id, count)
-      stream = adapter
+      stream = EventInStream.where(stream: "__global__")
       unless start_event_id.equal?(:head)
-        starting_event = adapter.find_by(event_id: start_event_id)
-        stream = stream.where('id > ?', starting_event)
+        stream = stream.where('event_id > ?', start_event_id)
       end
 
-      stream.order('id ASC').limit(count)
+      stream.preload(:event).order('id ASC').limit(count)
         .map(&method(:build_event_entity))
     end
 
@@ -82,10 +105,10 @@ module RailsEventStoreActiveRecord
 
     def build_event_entity(record)
       return nil unless record
-      record.event_type.constantize.new(
-        event_id: record.event_id,
-        metadata: record.metadata,
-        data: record.data
+      record.event.event_type.constantize.new(
+        event_id: record.event.id,
+        metadata: record.event.metadata,
+        data: record.event.data
       )
     end
   end
